@@ -1,0 +1,260 @@
+---
+title: "615 midterm final"
+author: "Zhouyi Zhao"
+date: "Oct 23 2016"
+output: html_document
+---
+
+### This project is a teamwork with Fangjing Fu.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(pipeR)
+library(ggplot2)
+```
+
+## International Food Security
+
+http://www.ers.usda.gov/data-products/international-food-security/
+
+This dataset is the basis for the International Food Security Assessment, 2016-26 released in June 2016.  This annual ERS report projects food availability and access for 76 low- and middle-income countries over a 10-year period.  The dataset includes annual country-level data on area, yield, production, nonfood use, trade, and consumption for grains and root and tuber crops (combined as R&T in the documentation tables), food aid, total value of imports and exports, gross domestic product, and population compiled from a variety of sources. 
+
+* Data File: gfa27.csv
+* Variables: 
+  \begin{itemize}
+  \item  Country: 76 low- and middle-income countries.
+  \item  Commodity: Economic Data, Food Aid, Population, Root Crops (R&T), Total Grains/Cereals, Total Grains/Cereals and Root Crops (R&T), Other.
+  \item  Item: 24 levels including Area Harvested, Cereal Food Aid, Export Quantity, etc.
+  \item  Unit: unit of the data
+  \item  Year: 1990-2014
+  \item  Amount: data
+\end{itemize}
+
+
+```{r}
+#read data
+IFS_raw <- read.csv("gfa27.csv")
+```
+
+
+## Tidy data
+
+We selected the variables we're interested in. 
+
+* Variables: 
+  \begin{itemize}
+  \item  Country: 76 low- and middle-income countries.
+  \item  Year: 1990-2014
+  \item  cereals_production: Total Grains/Cereals Production Quantity (1000 MT)
+  \item  cereals_ava: Total Grains/Cereals Food availability (1000 MT)
+  \item  cereals_import: Total Grains/Cereals Import Quantity (1000 MT)
+  \item  cereals_export: Total Grains/Cereals Export Quantity (1000 MT)
+  \item  cereals_harvested: Total Grains/Cereals Area Harvested (1000 Ha)
+  \item  cereals_aid: Cereal Food Aid (Grain Equivalent, 1000 MT)
+  \item  total_aid: Total Food Aid (Grain Equivalent, 1000 MT)
+  \item  GDP: GDP (constant 2000 US$, million)
+  \item  total_export: Exports of goods and services (constant 2000 US$, million)
+  \item  total_import: Imports of goods and services (constant 2000 US$, million)
+  \item  population: Total Population - Both Sexes (million)
+\end{itemize}
+
+####We make a subset of the raw data to pick up what we are interested in,and make it tidy.
+
+```{r}
+IFS_tidy <- IFS_raw[,c("Country","Year")] %>% unique()
+
+IFS_tidy <- IFS_raw %>% subset(Commodity=="Population",select=c("Country","Year","Amount")) %>>% full_join(IFS_tidy,., by = c("Country","Year")) 
+colnames(IFS_tidy)[3] <- "Population"
+```
+
+####We write a function to add the variables we want into the tidy dataset.
+
+```{r}
+#
+tidyIFS <- function(x,y){
+  IFS_tidy <- IFS_raw %>% subset(Commodity==x & Item == y,select=c("Country","Year","Amount")) %>>% full_join(IFS_tidy,., by = c("Country","Year"))
+  colnames(IFS_tidy)[3] <- y
+  return(IFS_tidy)
+}
+```
+
+####We put the variable names into the function to select the variables we need.And finally we establish a dataset with 13 variables and 1491 observations.
+
+```{r}
+IFS_tidy <- tidyIFS("Economic Data","Imports of goods and services (constant 2005 US$)")
+IFS_tidy <- tidyIFS("Economic Data","Exports of goods and services (constant 2005 US$)")
+IFS_tidy <- tidyIFS("Economic Data","GDP (constant 2005 US$)") 
+IFS_tidy <- tidyIFS("Food Aid","Total")
+IFS_tidy <- tidyIFS("Food Aid","Cereal Food Aid") 
+IFS_tidy <- tidyIFS("Total Grains/Cereals","Area Harvested")
+IFS_tidy <- tidyIFS("Total Grains/Cereals","Export Quantity") 
+IFS_tidy <- tidyIFS("Total Grains/Cereals","Import Quantity")
+IFS_tidy <- tidyIFS("Total Grains/Cereals","Food Availability") 
+IFS_tidy <- tidyIFS("Total Grains/Cereals","Production Quantity")
+
+names(IFS_tidy) <- c("Country","Year","cereals_production","cereals_ava","cereals_import","cereals_export","cereals_harvested","cereals_aid","total_aid","GDP","total_export","total_import","population")
+```
+
+## EDA
+
+
+
+### Trend of cereals production in 25-year period
+
+####plot the cereals production 
+
+```{r}
+library(ggvis)
+
+IFS_tidy %>%
+  ggvis(~Year,~cereals_production) %>%
+  filter(Country %in% eval(input_select(levels(IFS_tidy$Country),label='Country'))) %>% layer_lines()
+```
+
+####This plot is an interactive plot which can be checked in R environment.And in these plots we can see that most countries have an apparent increasing trend in cereals production.
+
+### availability/population
+
+```{r}
+aveg_ava <- IFS_tidy %>% mutate(aveg_ava=cereals_ava/population) %>% na.omit()
+
+ggplot(aveg_ava) + 
+  aes(x=Country,y=Year, fill=aveg_ava) + 
+  geom_raster()  +
+  theme(axis.text.x=element_text(angle=90, hjust=1))
+```
+
+#### This ratio shows the average level of cereal availability. From the plot,we can see severeal countries have relatively low average level with darker blue. And Egypt has the highest average cereal availability with the lightest blue.
+
+
+
+### Cereals Harvested 
+
+```{r}
+library(rworldmap)
+
+#Cereals Harvested
+
+
+cerharv_fun <- function(x){
+  cerharv_map <- IFS_tidy %>% subset(Year==x,select=c("Country","cereals_harvested"))
+  cerharv_map <- cerharv_map %>% mutate(country_iso3 = unlist(lapply(cerharv_map$Country, rwmGetISO3))) 
+  cerharv_map <- joinCountryData2Map(cerharv_map, joinCode = "ISO3", nameJoinColumn = "country_iso3")
+  return(cerharv_map)
+}
+
+mapCountryData(cerharv_fun(1990), nameColumnToPlot="cereals_harvested", 
+               xlim = NA,
+               ylim = NA,
+               colourPalette="terrain",
+               mapTitle = "Cereals Harvested",
+               lwd = 1,oceanCol = "azure1",missingCountryCol = "whitesmoke")
+```
+
+####In the plot, the gray part shows the area which are not included in this research. The darkness of represent the amount of cereals harvested.
+
+
+##cereals productivity 
+
+####cereals production/cereals area harvested
+
+```{r}
+produc_3 <- IFS_tidy %>% mutate(produc_harv_ratio=cereals_production/cereals_harvested) %>% na.omit()
+
+ggplot(produc_3) + 
+  aes(x=Country,y=produc_harv_ratio, col=Year) + 
+  geom_point()  + 
+  ggtitle("Productivity per 1000 Ha") + 
+  ylab("production per area") + 
+  theme(axis.text.x=element_text(angle=90, hjust=1))
+
+```
+
+####This plot shows the productivity by calculating the average production per hectare. And we can see that most countries's productivity is around 2000 metric ton per hectare.And we can see that almost every country's points are permutated from the lowest to the highest with the increase of the year.
+
+```{r}
+#mean of production/availability each year 
+produc_harv_ratio_mean <- aggregate(produc_3$produc_harv_ratio,by=list(produc_3$Year),mean) 
+
+names(produc_harv_ratio_mean) <- c("year","mean_ratio")
+
+ggplot(produc_harv_ratio_mean) + aes(x=year,y=mean_ratio) + geom_line()
+
+```
+
+####This plot clearly shows the increasing trend of productivity, which is consistent with the conclusion above.
+
+```{r}
+#mean of production/availability each year 
+produc_harv_ratio_sd <- aggregate(produc_3$produc_harv_ratio,by=list(produc_3$Year),sd) 
+
+names(produc_harv_ratio_sd) <- c("year","sd_ratio")
+
+ggplot(produc_harv_ratio_sd) + aes(x=year,y=sd_ratio) + geom_line()
+
+```
+
+####This plot reflects the change of standard deviation. We can see that with the increase of year, the standard deviation has an increasing trend.
+
+###dependence of external food resource
+
+####cereals food aid/cereals availability
+
+#####larger ratio means more possible to cause food security issues.
+
+```{r}
+produc_2 <- IFS_tidy %>% mutate(aid_ava_ratio=cereals_aid/cereals_ava) %>% na.omit()
+
+ggplot(produc_2) + 
+  aes(x=Country,y=aid_ava_ratio, col=Year) + 
+  geom_point() +  
+  ggtitle("Proportion of Food Aid in Food Availability") + 
+  ylab("Ratio") + 
+  theme(axis.text.x=element_text(angle=90, hjust=1))
+
+```
+
+####We can see that the high proportion of food aid in food availability presents in early years, and the proportion is close to 0 in most countries in recent years. This phenomenon illustrates the improvement of productivity which helps most countries satisfy their food need gradually, so they do not need a large amount of food aid any more.
+
+```{r}
+#mean of production/availability each year 
+aid_ava_ratio_mean <- aggregate(produc_2$aid_ava_ratio,by=list(produc_2$Year),mean) 
+
+names(aid_ava_ratio_mean) <- c("year","mean_ratio")
+
+ggplot(aid_ava_ratio_mean) + aes(x=year,y=mean_ratio) + geom_line()
+
+```
+
+####This plot reflects the decrease of food aid ratio, which is consistent with the conclusion above.
+
+#### cereals import/ total import
+
+```{r}
+#mean of production/availability each year 
+produc_4 <- IFS_tidy %>% mutate(import_ratio=cereals_import/total_import) %>% na.omit()
+import_ratio_mean <- aggregate(produc_4$import_ratio,by=list(produc_4$Year),mean) 
+
+names(import_ratio_mean) <- c("year","mean_ratio")
+
+ggplot(import_ratio_mean) + aes(x=year,y=mean_ratio) + geom_line()
+
+```
+
+```{r}
+#mean of cereal import/total import each year 
+import_ratio_sd <- aggregate(produc_4$import_ratio,by=list(produc_4$Year),sd) 
+
+names(import_ratio_sd) <- c("year","sd_ratio")
+
+ggplot(import_ratio_sd) + aes(x=year,y=sd_ratio) + geom_line()
+
+```
+
+
+####From these two plots,we can not see a decreasing trend in 1990-2014, which represents the food dependence on external food resource is decreasing. 
+
+#Future analysis plan
+#### From the result of EDA, we find we can use different statistics to estimate the food security of different countries, for instance we can use the dependence of food aid to judge the food security, higher dependence of food may cause food shortage. And we can do some regression to analyze the relationship between different variables.
